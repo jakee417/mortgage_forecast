@@ -5,7 +5,7 @@ from rent_vs_buy import RentVsBuy, annual_to_monthly, monthly_to_annual
 LENGTH = 3
 
 
-class TestStringMethods(unittest.TestCase):
+class TestRentVsBuy(unittest.TestCase):
     def setUp(self) -> None:
         self.answer = RentVsBuy().calculate().value[0]
 
