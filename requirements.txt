@@ -1,6 +1,7 @@
 scipy
-numpy
 numpy-financial
 plotly
 pandas
 nbformat
+ax-platform
+numpy

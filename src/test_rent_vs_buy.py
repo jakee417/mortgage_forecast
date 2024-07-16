@@ -47,7 +47,7 @@ class TestRentVsBuy(unittest.TestCase):
             10_000, rent_vs_buy.buying_closing_costs[0][0], decimal=1
         )
         np.testing.assert_almost_equal(
-            19571.59, rent_vs_buy.selling_closing_costs[-1][0], decimal=1
+            19571.59, rent_vs_buy.sellers_fee[-1][0], decimal=1
         )
         np.testing.assert_almost_equal(
             2494.75, rent_vs_buy.maintenance[:12].sum(), decimal=1
