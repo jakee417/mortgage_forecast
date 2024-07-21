@@ -6,9 +6,10 @@ from numpy.typing import ArrayLike
 import numpy_financial as npf
 import pandas as pd
 import plotly.graph_objects as go
-from typing import Any, Tuple, Union
+from typing import Any, Dict, List, Tuple, Union
 from dataclasses import Field, dataclass
 from IPython.display import display, Markdown
+from scipy.optimize import minimize_scalar
 
 PERIODS: int = 12
 SINGLE_STANDARD_DEDUCTION: int = 12_950
@@ -32,19 +33,27 @@ def render_plotly_html(fig: go.Figure) -> None:
     )
 
 
-def annual_to_monthly(rate: ArrayLike, periods: int = 12) -> ArrayLike:
+def annual_to_monthly_compounding(rate: ArrayLike, periods: int = 12) -> ArrayLike:
     return np.add(1.0, rate) ** (1 / periods) - 1.0
 
 
-def monthly_to_annual(rate: ArrayLike, periods: int = 12) -> ArrayLike:
+def monthly_to_annual_compounding(rate: ArrayLike, periods: int = 12) -> ArrayLike:
     return np.add(1.0, rate) ** (periods) - 1.0
+
+
+def annual_to_monthly(rate: ArrayLike, periods: int = 12) -> ArrayLike:
+    return np.divide(rate, periods)
+
+
+def monthly_to_annual(rate: ArrayLike, periods: int = 12) -> ArrayLike:
+    return np.multiply(rate, periods)
 
 
 @dataclass
 class RentVsBuy:
     # Variables
     annual_per: ArrayLike = 0
-    per: ArrayLike = 0
+    per_inv: ArrayLike = 0
 
     # Home Value
     home_value: ArrayLike = 0
@@ -107,6 +116,7 @@ class RentVsBuy:
     @dataclass(frozen=True)
     class RentVsBuyDefaults:
         home_price: ArrayLike = 250_000
+        financed_fees: ArrayLike = 0
         years: int = 9
         mortgage_rate: ArrayLike = 0.0367
         downpayment: ArrayLike = 0.20
@@ -134,6 +144,7 @@ class RentVsBuy:
     def calculate(
         self,
         home_price: ArrayLike = RentVsBuyDefaults.home_price,
+        financed_fees: ArrayLike = RentVsBuyDefaults.financed_fees,
         years: int = RentVsBuyDefaults.years,
         mortgage_rate: ArrayLike = RentVsBuyDefaults.mortgage_rate,
         downpayment: ArrayLike = RentVsBuyDefaults.downpayment,
@@ -167,6 +178,7 @@ class RentVsBuy:
 
         Args:
             home_price: the original price of the home.
+            financed_fees: any fees that are financed into the loan value (i.e. VA loan fee).
             years: number of years expecting to keep the home.
             mortgage_rate: mortgage rate to finance the home.
             downpayment: home price as downpayment expressed as a percentage.
@@ -197,6 +209,7 @@ class RentVsBuy:
 
         loan = np.array(home_price * np.subtract(1, downpayment)).reshape(1, -1)
         down = np.subtract(home_price, loan)
+        loan = np.add(loan, financed_fees)
 
         ###########################################################################
         # Convert to monthly rates.
@@ -216,12 +229,15 @@ class RentVsBuy:
         ###########################################################################
         # years must be an int for proper indexing.
         years = np.round(years).astype(int).squeeze()
-        self.per = np.mgrid[1 : years * PERIODS + 1].reshape(-1, 1)
+        # start from year 0 (current year) and total number of months.
+        self.per = np.mgrid[: years * PERIODS].reshape(-1, 1)
+        # convert month index to year index.
         self.annual_per = np.repeat(range(years), 12).reshape(-1, 1)
+        # mortgage periods requires 1-index
         self.mortgage_per = np.mgrid[1 : length_of_mortgage * PERIODS + 1].reshape(
             -1, 1
         )
-        self.per_inv = (years * PERIODS - self.per).reshape(-1, 1)
+        self.per_inv = (years * PERIODS - self.per).reshape(-1, 1) - 1
 
         ###########################################################################
         # Home Value.
@@ -445,7 +461,7 @@ class RentVsBuy:
         self.home_cumulative_opportunity = np.cumsum(
             self.home_opportunity_cost_fv_post_tax, axis=0
         )
-
+        
         # Buy vs. Rent is our equity - costs - opportunity cost
         self.buy_vs_rent = (
             self.rental_cumulative_opportunity - self.home_cumulative_opportunity
@@ -458,7 +474,7 @@ def rent_vs_buy_breakeven_objective_closure(scalar: str, **kwargs):
     def _fn(x: Union[int, float]):
         kwargs.update({scalar: x})
         # Only scalar output is supported for minimization.
-        return abs(float(RentVsBuy().calculate(**kwargs).value) - 1.0)
+        return abs(float(RentVsBuy().calculate(**kwargs).value))
 
     return _fn
 
@@ -471,3 +487,46 @@ def rent_vs_buy_objective_closure(scalar: str, maximize: bool, **kwargs):
         return RentVsBuy().calculate(**kwargs).value * (-1 if maximize else 1.0)
 
     return _fn
+
+
+def breakeven_per_year(
+    scalar: str,
+    bounds: List[float],
+    start_year: int,
+    end_year: int,
+    kwargs: Dict[str, Any],
+) -> pd.DataFrame:
+    results = {}
+    for i in range(start_year, end_year):
+        optimize_kwargs = kwargs.copy()
+        optimize_kwargs["years"] = i
+        results[i] = minimize_scalar(
+            fun=rent_vs_buy_breakeven_objective_closure(
+                scalar=scalar, **optimize_kwargs
+            ),
+            bounds=bounds,
+        )
+    df = pd.DataFrame.from_dict(results).T
+    return df
+
+
+def optimization_per_year(
+    scalar: str,
+    bounds: List[float],
+    start_year: int,
+    end_year: int,
+    kwargs: Dict[str, Any],
+) -> pd.DataFrame:
+    results = {}
+    for i in range(start_year, end_year):
+        optimize_kwargs = kwargs.copy()
+        optimize_kwargs["years"] = i
+        results[i] = minimize_scalar(
+            fun=rent_vs_buy_objective_closure(
+                scalar=scalar, maximize=True, **optimize_kwargs
+            ),
+            bounds=bounds,
+        )
+    df = pd.DataFrame.from_dict(results).T
+    df.fun *= -1
+    return df
