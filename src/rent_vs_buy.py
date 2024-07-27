@@ -68,6 +68,7 @@ class RentVsBuy:
     property_taxes: ArrayLike = 0
     monthly_common_fees: ArrayLike = 0
     buying_closing_costs: ArrayLike = 0
+    points: ArrayLike = 0
     down_fee: ArrayLike = 0
     home_monthly_utilities: ArrayLike = 0
     pmi: ArrayLike = 0
@@ -120,6 +121,7 @@ class RentVsBuy:
         years: int = 9
         mortgage_rate: ArrayLike = 0.0367
         downpayment: ArrayLike = 0.20
+        points: ArrayLike = 0
         pmi: ArrayLike = 0.005
         length_of_mortgage: int = 30
         home_price_growth_rate: ArrayLike = 0.03
@@ -131,7 +133,7 @@ class RentVsBuy:
         property_tax_rate: ArrayLike = 0.0135
         marginal_tax_rate: ArrayLike = 0.2
         costs_of_buying_home: ArrayLike = 0.04
-        costs_of_selling_home: ArrayLike = 0.06
+        costs_of_selling_home: ArrayLike = 0.03
         maintenance_rate: ArrayLike = 0.01
         home_owners_insurance_rate: ArrayLike = 0.0046
         monthly_utilities: ArrayLike = 100
@@ -148,6 +150,7 @@ class RentVsBuy:
         years: int = RentVsBuyDefaults.years,
         mortgage_rate: ArrayLike = RentVsBuyDefaults.mortgage_rate,
         downpayment: ArrayLike = RentVsBuyDefaults.downpayment,
+        points: ArrayLike = RentVsBuyDefaults.points,
         pmi: ArrayLike = RentVsBuyDefaults.pmi,
         length_of_mortgage: int = RentVsBuyDefaults.length_of_mortgage,
         home_price_growth_rate: ArrayLike = RentVsBuyDefaults.home_price_growth_rate,
@@ -182,6 +185,7 @@ class RentVsBuy:
             years: number of years expecting to keep the home.
             mortgage_rate: mortgage rate to finance the home.
             downpayment: home price as downpayment expressed as a percentage.
+            points: Amount of points expressed as a percentage of the loan value.
             pmi: primary mortgage insurance expressed as a percentage of total loan.
             length_of_mortgage: length of home loan.
             home_price_growth_rate: rate at which the value of the home increases.
@@ -291,6 +295,14 @@ class RentVsBuy:
             axis=0,
         )
 
+        # Points is a one time cost
+        self.points = np.array(loan).reshape(1, -1) * points
+        self.points = np.append(
+            self.points,
+            np.zeros((years * PERIODS - 1, self.points.shape[1])),
+            axis=0,
+        )
+
         # Since the mortgage timeline can be different than the home holding period,
         # we have to fill in the lesser of the two with the payments.
         slice = np.s_[: min(years, length_of_mortgage) * PERIODS]
@@ -338,6 +350,7 @@ class RentVsBuy:
             + self.property_taxes
             + self.monthly_common_fees
             + self.buying_closing_costs
+            + self.points
             + self.down_fee
             + self.home_monthly_utilities
             + self.pmi
@@ -365,7 +378,15 @@ class RentVsBuy:
             annual_ipmt - standard_deduction,
             0,
         )
-        self.total_home_assets = np.zeros((years * PERIODS, self.home_value.shape[1]))
+        self.total_home_assets = np.zeros(
+            (
+                years * PERIODS,
+                max(
+                    self.home_value.shape[1],
+                    self.mortgage_interest_contribution.shape[1],
+                ),
+            )
+        )
         # Tax credit at the end of the year for paying mortgage
         self.total_home_assets[PERIODS - 1 :: PERIODS, :] = np.add(
             self.total_home_assets[PERIODS - 1 :: PERIODS, :],
@@ -461,7 +482,7 @@ class RentVsBuy:
         self.home_cumulative_opportunity = np.cumsum(
             self.home_opportunity_cost_fv_post_tax, axis=0
         )
-        
+
         # Buy vs. Rent is our equity - costs - opportunity cost
         self.buy_vs_rent = (
             self.rental_cumulative_opportunity - self.home_cumulative_opportunity
@@ -484,7 +505,7 @@ def rent_vs_buy_objective_closure(scalar: str, maximize: bool, **kwargs):
     def _fn(x: Union[int, float]):
         kwargs.update({scalar: x})
         # Only scalar output is supported for minimization.
-        return RentVsBuy().calculate(**kwargs).value * (-1 if maximize else 1.0)
+        return RentVsBuy().calculate(**kwargs).value.squeeze() * (-1 if maximize else 1.0)
 
     return _fn
 
